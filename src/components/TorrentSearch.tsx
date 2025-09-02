@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Download, ExternalLink, Magnet, Clock, Users, Play, Zap } from 'lucide-react';
+import { Search, Download, ExternalLink, Magnet, Clock, Users, Play, Zap, AlertCircle } from 'lucide-react';
 import { TorrentResult } from '../types';
 import { movieService } from '../services/movieService';
 
@@ -15,6 +15,7 @@ function TorrentSearch({ results, loading, onSearch, onPlayMovie }: TorrentSearc
   const [currentPage, setCurrentPage] = useState(1);
   const [checkingAvailability, setCheckingAvailability] = useState<Set<number>>(new Set());
   const [instantAvailable, setInstantAvailable] = useState<Set<number>>(new Set());
+  const [streamingTorrent, setStreamingTorrent] = useState<Set<number>>(new Set());
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,6 +61,48 @@ function TorrentSearch({ results, loading, onSearch, onPlayMovie }: TorrentSearc
     }
   };
 
+  const handleStreamNow = async (torrent: TorrentResult, index: number) => {
+    setStreamingTorrent(prev => new Set(prev).add(index));
+    
+    try {
+      const streamUrl = await movieService.streamFromMagnet(torrent.magnet, torrent.name);
+      
+      const movieData = {
+        id: `torrent-${index}`,
+        title: torrent.name,
+        overview: `Streaming from Real-Debrid - ${formatSize(torrent.size)}`,
+        posterUrl: 'https://images.pexels.com/photos/7991579/pexels-photo-7991579.jpeg?w=300&h=450&fit=crop',
+        backdropUrl: 'https://images.pexels.com/photos/7991579/pexels-photo-7991579.jpeg?w=1200&h=675&fit=crop',
+        releaseDate: '2024-01-01',
+        rating: 7.5,
+        genre: ['Movie'],
+        duration: 120,
+        streamUrl: streamUrl
+      };
+      
+      onPlayMovie(movieData);
+    } catch (error) {
+      console.error('Failed to start streaming:', error);
+      alert('Failed to start streaming. The torrent may need time to process.');
+    } finally {
+      setStreamingTorrent(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(index);
+        return newSet;
+      });
+    }
+  };
+
+  const handleAddToRD = async (torrent: TorrentResult, index: number) => {
+    try {
+      await movieService.addMagnetToRD(torrent.magnet, torrent.name);
+      alert('Torrent added to Real-Debrid successfully! Check your library once processing is complete.');
+    } catch (error) {
+      console.error('Failed to add to Real-Debrid:', error);
+      alert('Failed to add torrent to Real-Debrid. Please check your API token.');
+    }
+  };
+
   return (
     <div className="p-8">
       <div className="mb-8">
@@ -97,13 +140,11 @@ function TorrentSearch({ results, loading, onSearch, onPlayMovie }: TorrentSearc
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-gray-400">Found {results.length} results</p>
-            <div className="flex space-x-2">
-              <button className="px-4 py-2 bg-gray-800 rounded-lg text-sm hover:bg-gray-700 transition-colors">
-                Sort by Seeds
-              </button>
-              <button className="px-4 py-2 bg-gray-800 rounded-lg text-sm hover:bg-gray-700 transition-colors">
-                Filter Quality
-              </button>
+            <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-blue-400" />
+              <span className="text-sm text-blue-300">
+                Make sure your Real-Debrid API token is configured in Settings
+              </span>
             </div>
           </div>
           
@@ -112,6 +153,7 @@ function TorrentSearch({ results, loading, onSearch, onPlayMovie }: TorrentSearc
               const quality = getQualityBadge(torrent.name);
               const isChecking = checkingAvailability.has(index);
               const isInstant = instantAvailable.has(index);
+              const isStreaming = streamingTorrent.has(index);
               
               return (
                 <div
@@ -179,29 +221,27 @@ function TorrentSearch({ results, loading, onSearch, onPlayMovie }: TorrentSearc
                     )}
                     
                     <button
-                      onClick={() => {
-                        // Add to Real-Debrid and play instantly
-                        const movieData = {
-                          id: `torrent-${index}`,
-                          title: torrent.name,
-                          overview: `Downloaded from torrent - ${formatSize(torrent.size)}`,
-                          posterUrl: 'https://images.unsplash.com/photo-1489599211381-1b0b5bacdaa8?w=300&h=450&fit=crop',
-                          backdropUrl: 'https://images.unsplash.com/photo-1489599211381-1b0b5bacdaa8?w=1200&h=675&fit=crop',
-                          releaseDate: '2024-01-01',
-                          rating: 7.5,
-                          genre: ['Action'],
-                          duration: 120,
-                          magnetLink: torrent.magnet
-                        };
-                        onPlayMovie(movieData);
-                      }}
-                      className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-semibold transition-colors flex items-center space-x-2"
+                      onClick={() => handleStreamNow(torrent, index)}
+                      disabled={isStreaming}
+                      className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-semibold transition-colors flex items-center space-x-2"
                     >
-                      <Play className="w-4 h-4" />
-                      <span>Stream Now</span>
+                      {isStreaming ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>Processing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4" />
+                          <span>Stream Now</span>
+                        </>
+                      )}
                     </button>
                     
-                    <button className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-semibold transition-colors flex items-center space-x-2">
+                    <button 
+                      onClick={() => handleAddToRD(torrent, index)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-semibold transition-colors flex items-center space-x-2"
+                    >
                       <Download className="w-4 h-4" />
                       <span>Add to RD</span>
                     </button>

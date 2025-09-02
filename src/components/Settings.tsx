@@ -55,9 +55,13 @@ function Settings({ onClose }: SettingsProps) {
     setConnectionStatus('idle');
     
     try {
-      // Test by getting user torrents
-      await realDebridService.getTorrents();
-      setConnectionStatus('success');
+      // Test by verifying the token
+      const isValid = await realDebridService.verifyToken();
+      if (isValid) {
+        setConnectionStatus('success');
+      } else {
+        setConnectionStatus('error');
+      }
     } catch (error) {
       console.error('Connection test failed:', error);
       setConnectionStatus('error');

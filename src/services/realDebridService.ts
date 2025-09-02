@@ -1,77 +1,56 @@
-interface RealDebridConfig {
-  apiToken: string;
-  baseUrl: string;
-}
-
-interface TorrentInfo {
-  id: string;
-  filename: string;
-  original_filename: string;
-  hash: string;
-  bytes: number;
-  original_bytes: number;
-  host: string;
-  split: number;
-  progress: number;
-  status: string;
-  added: string;
-  files: RealDebridFile[];
-  links: string[];
-  ended?: string;
-  speed?: number;
-  seeders?: number;
-}
-
-interface RealDebridFile {
-  id: number;
-  path: string;
-  bytes: number;
-  selected: number;
-}
-
-interface UnrestrictedLink {
-  id: string;
-  filename: string;
-  mimeType: string;
-  filesize: number;
-  link: string;
-  host: string;
-  chunks: number;
-  crc: number;
-  download: string;
-  streamable: number;
-}
-
-interface InstantAvailability {
-  [hash: string]: {
-    [quality: string]: {
-      [fileId: string]: {
-        filename: string;
-        filesize: number;
-      };
-    };
-  };
-}
+import { RealDebridTorrent, UnrestrictedLink, InstantAvailability } from '../types';
 
 class RealDebridService {
-  private config: RealDebridConfig;
-
-  constructor() {
-    this.config = {
-      apiToken: '', // Will be set by user
-      baseUrl: 'https://api.real-debrid.com/rest/1.0'
-    };
-  }
+  private baseUrl = 'https://api.real-debrid.com/rest/1.0';
+  private apiToken: string | null = null;
 
   setApiToken(token: string) {
-    this.config.apiToken = token;
+    this.apiToken = token;
+    localStorage.setItem('rd_api_token', token);
   }
 
-  private getHeaders() {
-    return {
-      'Authorization': `Bearer ${this.config.apiToken}`,
-      'Content-Type': 'application/x-www-form-urlencoded'
-    };
+  getApiToken(): string | null {
+    if (!this.apiToken) {
+      this.apiToken = localStorage.getItem('rd_api_token');
+    }
+    return this.apiToken;
+  }
+
+  clearApiToken() {
+    this.apiToken = null;
+    localStorage.removeItem('rd_api_token');
+  }
+
+  private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
+    const token = this.getApiToken();
+    if (!token) {
+      throw new Error('No API token available');
+    }
+
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`API Error: ${response.status} - ${error}`);
+    }
+
+    return response.json();
+  }
+
+  async verifyToken(): Promise<boolean> {
+    try {
+      await this.makeRequest('/user');
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private extractHashFromMagnet(magnetLink: string): string {
@@ -80,32 +59,13 @@ class RealDebridService {
   }
 
   async checkInstantAvailability(magnetLink: string): Promise<boolean> {
-    if (!this.config.apiToken) {
-      throw new Error('Real-Debrid API token not configured');
-    }
-
     const hash = this.extractHashFromMagnet(magnetLink);
     if (!hash) {
       throw new Error('Invalid magnet link - could not extract hash');
     }
 
     try {
-      const response = await fetch(
-        `${this.config.baseUrl}/torrents/instantAvailability/${hash}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.config.apiToken}`
-          }
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
-      }
-
-      const data: InstantAvailability = await response.json();
-      
-      // Check if any files are available for this hash
+      const data: InstantAvailability = await this.makeRequest(`/torrents/instantAvailability/${hash}`);
       return Object.keys(data[hash] || {}).length > 0;
     } catch (error) {
       console.error('Error checking instant availability:', error);
@@ -114,177 +74,78 @@ class RealDebridService {
   }
 
   async addMagnet(magnetLink: string): Promise<string> {
-    if (!this.config.apiToken) {
-      throw new Error('Real-Debrid API token not configured');
-    }
-
-    try {
-      const formData = new URLSearchParams();
-      formData.append('magnet', magnetLink);
-
-      const response = await fetch(`${this.config.baseUrl}/torrents/addMagnet`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: formData
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to add magnet: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.id;
-    } catch (error) {
-      console.error('Error adding magnet:', error);
-      throw new Error('Failed to add magnet to Real-Debrid');
-    }
+    const body = `magnet=${encodeURIComponent(magnetLink)}`;
+    
+    const data = await this.makeRequest('/torrents/addMagnet', {
+      method: 'POST',
+      body,
+    });
+    
+    return data.id;
   }
 
   async selectFiles(torrentId: string, fileIds: string = 'all'): Promise<void> {
-    if (!this.config.apiToken) {
-      throw new Error('Real-Debrid API token not configured');
-    }
-
-    try {
-      const formData = new URLSearchParams();
-      formData.append('files', fileIds);
-
-      const response = await fetch(
-        `${this.config.baseUrl}/torrents/selectFiles/${torrentId}`,
-        {
-          method: 'POST',
-          headers: this.getHeaders(),
-          body: formData
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to select files: ${response.status}`);
-      }
-    } catch (error) {
-      console.error('Error selecting files:', error);
-      throw new Error('Failed to select torrent files');
-    }
+    const body = `files=${fileIds}`;
+    
+    await this.makeRequest(`/torrents/selectFiles/${torrentId}`, {
+      method: 'POST',
+      body,
+    });
   }
 
-  async getTorrentInfo(torrentId: string): Promise<TorrentInfo> {
-    if (!this.config.apiToken) {
-      throw new Error('Real-Debrid API token not configured');
-    }
-
-    try {
-      const response = await fetch(
-        `${this.config.baseUrl}/torrents/info/${torrentId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.config.apiToken}`
-          }
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to get torrent info: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error getting torrent info:', error);
-      throw new Error('Failed to get torrent information');
-    }
+  async getTorrentInfo(torrentId: string): Promise<RealDebridTorrent> {
+    return this.makeRequest(`/torrents/info/${torrentId}`);
   }
 
-  async unrestrictLink(fileUrl: string): Promise<UnrestrictedLink> {
-    if (!this.config.apiToken) {
-      throw new Error('Real-Debrid API token not configured');
-    }
-
-    try {
-      const formData = new URLSearchParams();
-      formData.append('link', fileUrl);
-
-      const response = await fetch(`${this.config.baseUrl}/unrestrict/link`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: formData
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to unrestrict link: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error unrestricting link:', error);
-      throw new Error('Failed to get streamable link');
-    }
+  async getTorrents(): Promise<RealDebridTorrent[]> {
+    return this.makeRequest('/torrents');
   }
 
-  async getTorrents(): Promise<TorrentInfo[]> {
-    if (!this.config.apiToken) {
-      throw new Error('Real-Debrid API token not configured');
-    }
-
-    try {
-      const response = await fetch(`${this.config.baseUrl}/torrents`, {
-        headers: {
-          'Authorization': `Bearer ${this.config.apiToken}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to get torrents: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error getting torrents:', error);
-      throw new Error('Failed to get Real-Debrid torrents');
-    }
+  async unrestrictLink(link: string): Promise<UnrestrictedLink> {
+    const body = `link=${encodeURIComponent(link)}`;
+    
+    return this.makeRequest('/unrestrict/link', {
+      method: 'POST',
+      body,
+    });
   }
 
-  async processAndStream(magnetLink: string, title: string): Promise<string> {
-    try {
-      // Check if instantly available
-      const isInstant = await this.checkInstantAvailability(magnetLink);
-      
-      if (isInstant) {
-        console.log('Torrent is instantly available!');
-      }
+  async deleteTorrent(torrentId: string): Promise<void> {
+    await this.makeRequest(`/torrents/delete/${torrentId}`, {
+      method: 'DELETE',
+    });
+  }
 
+  async processAndStream(magnetLink: string): Promise<string> {
+    try {
       // Add magnet to Real-Debrid
       const torrentId = await this.addMagnet(magnetLink);
       
       // Select all files
       await this.selectFiles(torrentId);
       
-      // Wait for processing and get torrent info
+      // Get torrent info to check status
       let torrentInfo = await this.getTorrentInfo(torrentId);
       
-      // Wait for download to complete if not instant
-      while (torrentInfo.status !== 'downloaded' && !isInstant) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
+      // Wait for processing if needed
+      let attempts = 0;
+      while (torrentInfo.status !== 'downloaded' && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
         torrentInfo = await this.getTorrentInfo(torrentId);
+        attempts++;
       }
       
-      // Get the largest video file (usually the main movie)
-      const videoFiles = torrentInfo.files.filter(file => 
-        file.path.match(/\.(mp4|mkv|avi|mov|wmv)$/i)
-      );
-      
-      if (videoFiles.length === 0) {
-        throw new Error('No video files found in torrent');
+      if (torrentInfo.status !== 'downloaded') {
+        throw new Error('Torrent processing timeout');
       }
       
-      // Select the largest file
-      const largestFile = videoFiles.reduce((prev, current) => 
-        current.bytes > prev.bytes ? current : prev
-      );
+      // Get the first available link
+      if (torrentInfo.links.length === 0) {
+        throw new Error('No download links available');
+      }
       
-      // Get the file URL from torrent links
-      const fileUrl = torrentInfo.links[largestFile.id - 1];
-      
-      // Unrestrict the link to get direct streaming URL
-      const unrestrictedLink = await this.unrestrictLink(fileUrl);
+      // Unrestrict the first link
+      const unrestrictedLink = await this.unrestrictLink(torrentInfo.links[0]);
       
       return unrestrictedLink.download;
     } catch (error) {

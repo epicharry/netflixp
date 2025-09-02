@@ -31,9 +31,51 @@ export interface TorrentSearchResponse {
 }
 
 export interface RealDebridFile {
+  id: number;
+  path: string;
+  bytes: number;
+  selected: number;
+}
+
+export interface RealDebridTorrent {
   id: string;
   filename: string;
-  size: number;
+  original_filename: string;
+  hash: string;
+  bytes: number;
+  original_bytes: number;
+  host: string;
+  split: number;
+  progress: number;
+  status: string;
+  added: string;
+  files: RealDebridFile[];
+  links: string[];
+  ended?: string;
+  speed?: number;
+  seeders?: number;
+}
+
+export interface UnrestrictedLink {
+  id: string;
+  filename: string;
+  mimeType: string;
+  filesize: number;
+  link: string;
+  host: string;
+  chunks: number;
+  crc: number;
   download: string;
-  streamable: boolean;
+  streamable: number;
+}
+
+export interface InstantAvailability {
+  [hash: string]: {
+    [quality: string]: {
+      [fileId: string]: {
+        filename: string;
+        filesize: number;
+      };
+    };
+  };
 }
